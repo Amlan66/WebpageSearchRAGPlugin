@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+faiss_cache/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment variables
+.env
+
+INDEXING_FLOW.md
+MANUAL_INDEXING_WORKFLOW.md
+PROJECT_SUMMARY.md
+QUICKSTART.md
+TOOLS.md
+UV_USAGE.md
+VISUAL_OVERVIEW.md
+
+search_history.json
