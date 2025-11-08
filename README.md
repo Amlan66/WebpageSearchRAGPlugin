@@ -44,7 +44,6 @@ An intelligent Chrome extension that indexes and searches your browsing history 
 ├─────────────────────┤
 │ • Creates embeddings│
 │ • Updates FAISS idx │
-│ • Exposed via ngrok │
 └─────────────────────┘
 ```
 
@@ -53,12 +52,12 @@ An intelligent Chrome extension that indexes and searches your browsing history 
 ### Local System
 - Python 3.10+
 - UV package manager
-- Ollama with `nomic-embed-text` model (optional, for local embeddings)
+- Ollama with `nomic-embed-text` model (required for search query embeddings)
 - Chrome browser
 
 ### Google Colab
 - Google account with Colab access
-- ngrok account (free tier works)
+- GPU runtime for faster indexing
 
 ## 🚀 Installation
 
@@ -70,7 +69,7 @@ cd RAGChromePlugin
 # Install all dependencies using UV (reads from pyproject.toml)
 uv sync
 
-# Optional: Install Ollama and pull embedding model for local embeddings
+# Install Ollama and pull embedding model for search query embeddings
 # Download from https://ollama.ai
 ollama pull nomic-embed-text
 ```
@@ -85,75 +84,89 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 Get your Gemini API key from: https://makersuite.google.com/app/apikey
 
-### 3. Setup Google Colab Indexer
+### 3. Setup Google Colab Indexer (Manual Workflow)
 
 1. Open Google Colab: https://colab.research.google.com/
 2. Upload `colab_indexer.py` to Colab
 3. Change runtime to GPU:
    - Runtime → Change runtime type → GPU
-4. Get ngrok auth token:
-   - Sign up at https://dashboard.ngrok.com/
-   - Copy your auth token
-5. Edit `colab_indexer.py` and add your ngrok token:
+4. Create `urls.txt` in Colab with URLs to index (one per line):
    ```python
-   NGROK_TOKEN = "your_ngrok_token_here"
+   %%writefile urls.txt
+   https://example.com/page1
+   https://example.com/page2
+   # Add your URLs here
    ```
-6. Run the setup cells in Colab:
+5. Run the installation and indexing:
    ```python
-   !pip install -q fastapi uvicorn pyngrok faiss-gpu numpy pydantic nest-asyncio sentence-transformers
-   !python colab_indexer.py
+   !pip install -q faiss-cpu sentence-transformers torch requests beautifulsoup4 lxml tqdm
+   %run colab_indexer.py
    ```
-7. Copy the ngrok URL that appears (e.g., `https://xxxx.ngrok.io`)
+6. Download the generated files:
+   ```python
+   from google.colab import files
+   files.download('webpage_index/index.bin')
+   files.download('webpage_index/metadata.json')
+   files.download('webpage_index/url_index_cache.json')
+   ```
+7. Place downloaded files in `RAGChromePlugin/faiss_cache/` directory locally
 
 ### 4. Install Chrome Extension
 
 1. Open Chrome and go to `chrome://extensions/`
 2. Enable "Developer mode" (toggle in top right)
 3. Click "Load unpacked"
-4. Select the `chrome_extension` folder
+4. Select the `RAGChromePlugin/chrome_extension` folder
 5. The extension should now appear in your toolbar
 
-### 5. Connect Everything
+### 5. Start the Local Agent
 
-1. Start the local agent:
-   ```bash
-   cd RAGChromePlugin
-   python agentCP.py
-   ```
-   
-   The server should start on `http://localhost:8000`
+```bash
+cd RAGChromePlugin
+python main.py
+```
 
-2. Configure Colab connection:
-   ```bash
-   curl -X POST http://localhost:8000/config/colab \
-        -H 'Content-Type: application/json' \
-        -d '{"ngrok_url": "YOUR_NGROK_URL_FROM_COLAB"}'
-   ```
+The server should start on `http://localhost:8000`
 
-3. Open the Chrome extension popup - you should see stats!
+Now you're ready to search! Open the Chrome extension and try searching for content from your indexed pages.
 
 ## 📖 Usage
 
-### Indexing Pages
+### Indexing Pages (Manual Colab Workflow)
 
-**Manual Indexing:**
-1. Visit any webpage
-2. Click the extension icon
-3. Click "📄 Index Current Page"
-4. Wait for indexing to complete (progress bar shows status)
+1. **Collect URLs** you want to index
+2. **Add them to `urls.txt`** in Google Colab (one URL per line)
+3. **Run the indexer** in Colab:
+   ```python
+   %run colab_indexer.py
+   ```
+4. **Download the generated files**:
+   - `index.bin` (FAISS vector index)
+   - `metadata.json` (chunk metadata)
+   - `url_index_cache.json` (content hashes for change detection)
+5. **Place files in `RAGChromePlugin/faiss_cache/`** locally
+6. **Restart the agent** if it's already running:
+   ```bash
+   python main.py
+   ```
 
 **What Gets Indexed:**
 - ✅ Regular websites (news, blogs, documentation, etc.)
-- ❌ Gmail, WhatsApp, YouTube
-- ❌ Banking sites
-- ❌ Login pages
+- ❌ Gmail, WhatsApp, YouTube (you can manually exclude these)
+- ❌ Banking sites, login pages (recommended to exclude)
+
+**Re-indexing Updated Content:**
+- The indexer uses MD5 hashing to detect changed content
+- Add the URL to `urls.txt` again and re-run the indexer
+- Old chunks are automatically removed before adding new ones
+- Download and replace the files in `faiss_cache/`
 
 ### Searching
 
-1. Click the extension icon
-2. Type your query in the search box
-3. Press Enter or click "Search"
-4. Click any result to navigate and highlight
+1. **Click the extension icon**
+2. **Type your query** in the search box
+3. **Press Enter** - Automatically opens the top result and highlights text ✨
+4. **OR click "Search"** - Shows top 3 results, click any to navigate
 
 **Example Queries:**
 - "authentication implementation details"
@@ -162,9 +175,11 @@ Get your Gemini API key from: https://makersuite.google.com/app/apikey
 
 ### Features
 
-- **Smart Stats**: View indexed pages and chunks count
-- **Current Page Status**: See if current page is indexed
-- **One-Click Navigation**: Click results to jump to page with highlighted text
+- **Semantic Search**: Finds content by meaning, not just keywords
+- **Auto-Navigation**: Press Enter to jump directly to the best match
+- **Smart Highlighting**: Highlights relevant text in bright neon green
+- **Top Results View**: Click search button to browse multiple results
+- **Local Processing**: All searches happen locally for privacy and speed
 
 ## 🧠 Agentic Components
 
@@ -193,56 +208,41 @@ Get your Gemini API key from: https://makersuite.google.com/app/apikey
 - **SearchHistoryMemory**: Stores search queries
 
 ### Tools (`toolsCP.py`)
-- **LocalIndexManager**: Manages FAISS index locally
-- **EmbeddingService**: Generates embeddings (local or Colab)
-- **ColabClient**: Communicates with Colab indexer
-- Search, index, status, and navigation tools
+- **LocalIndexManager**: Manages FAISS index (read-only, loads from faiss_cache/)
+- **EmbeddingService**: Generates embeddings locally via Ollama (nomic-embed-text)
+- **ColabClient**: Disabled (manual workflow only)
+- Search tool for querying the local index
 
 ## 🔧 Configuration
 
 ### Chunking Strategy
-Edit `perceptionCP.py`:
+Edit `colab_indexer.py`:
 ```python
 CHUNK_SIZE = 256  # Words per chunk
 CHUNK_OVERLAP = 40  # Overlapping words
 ```
 
 ### Excluded Domains
-Edit `perceptionCP.py` → `should_index_url()`:
-```python
-excluded_domains = [
-    'mail.google.com',
-    'gmail.com',
-    # Add more...
-]
-```
+Manually exclude URLs in your `urls.txt` file. Do not add sensitive sites like:
+- Gmail, WhatsApp, YouTube
+- Banking and financial sites
+- Login pages
 
-### Index Sync Interval
-Edit `decisionCP.py`:
+### Embedding Model
+Edit `colab_indexer.py` to change the model:
 ```python
-sync_interval_minutes = 30  # How often to sync with Colab
+EMBED_MODEL = "nomic-ai/nomic-embed-text-v1.5"
+EMBEDDING_DIM = 768
 ```
 
 ## 📊 API Endpoints
 
 ### Local Agent (`localhost:8000`)
 
-- `POST /search` - Search indexed content
-- `POST /index` - Index a webpage
+- `POST /search` - Search indexed content (main endpoint)
 - `GET /status` - Get indexing statistics
-- `POST /navigate` - Navigate and highlight
-- `POST /check_url` - Check if URL is indexed
-- `POST /config/colab` - Configure Colab URL
-- `GET /memory/stats` - Get memory statistics
-- `POST /agent/query` - Full agentic query processing
-
-### Colab Indexer
-
-- `GET /` - Health check
-- `POST /index` - Index webpage (with chunks)
-- `GET /stats` - Get index statistics
-- `GET /export` - Export complete index
-- `GET /metadata` - Get metadata only
+- `POST /index` - Disabled (returns instructions for manual Colab indexing)
+- Other endpoints available for extensibility
 
 ## 🐛 Troubleshooting
 
@@ -252,30 +252,47 @@ sync_interval_minutes = 30  # How often to sync with Colab
 curl http://localhost:8000/
 
 # Restart agent
-python agentCP.py
+python main.py
 ```
 
-### Colab Session Expired
-1. Go back to Colab notebook
-2. Run the server cell again
-3. Copy new ngrok URL
-4. Reconfigure: `POST /config/colab`
-
-### Indexing Fails
-- Check Ollama is running: `ollama list`
-- Verify Gemini API key in `.env`
-- Check Colab ngrok URL is configured
-- View agent logs in terminal
+### Indexing Fails in Colab
+- Ensure GPU runtime is selected
+- Check if all dependencies are installed
+- Verify `urls.txt` is uploaded and formatted correctly
+- Check Colab logs for specific errors (403, network issues, etc.)
 
 ### Search Returns No Results
-- Index some pages first
-- Check index stats in extension popup
-- Verify FAISS index exists: `ls faiss_cache/`
+- Ensure you've indexed pages in Colab
+- Verify downloaded files are in `faiss_cache/`:
+  - `index.bin`
+  - `metadata.json`
+  - `url_index_cache.json`
+- Restart the agent after placing files
+- Check Ollama is running: `ollama list`
 
-### Extension Not Loading Pages
+### Text Not Highlighting
+- The indexed text may have changed on the webpage
+- Try re-indexing the URL in Colab
+- Check browser console (F12) for detailed logs
+- The plugin tries multiple matching strategies automatically
+
+### Extension Not Loading
 - Check permissions in `chrome://extensions/`
-- Verify content script is injected (check console)
-- Try reloading the extension
+- Verify you loaded the `chrome_extension` folder (not the root)
+- Try reloading the extension (🔄 button)
+- Check for errors in extension console
+
+### Ollama Not Working
+```bash
+# Check if Ollama is installed and running
+ollama list
+
+# Pull the model if needed
+ollama pull nomic-embed-text
+
+# Test the model
+ollama run nomic-embed-text "test query"
+```
 
 ## 📁 Project Structure
 
@@ -363,39 +380,42 @@ MIT License - Feel free to use and modify as needed.
 
 ## 💡 Key Insights
 
-### Answering Your Doubts
+### Current Workflow (Manual Colab Indexing)
 
-#### 1. Do we need MCP server running locally?
-**No**, not for this implementation. We replaced MCP with FastAPI for simpler HTTP communication between Chrome extension and Python backend. The agentic components are integrated directly into FastAPI.
+#### 1. Indexing Happens Only in Colab
+- All webpage content fetching and embedding generation happens in Google Colab
+- Uses GPU-accelerated `nomic-embed-text` model via Sentence Transformers
+- Creates `index.bin`, `metadata.json`, and `url_index_cache.json`
+- You manually download these files and place them in `faiss_cache/` locally
 
-#### 2. Handling Colab GPU accessibility
-**Solution implemented**:
-- Index is managed locally in `faiss_cache/`
-- Colab is optional for GPU-accelerated indexing
-- Falls back to local Ollama embeddings if Colab unavailable
-- Can download index from Colab to local periodically
-- `url_index_cache.json` hash checking determines what needs updating
+#### 2. Local Agent is Read-Only
+- The local agent **only searches** the pre-built index
+- It does NOT create or update the index
+- Uses local Ollama (`nomic-embed-text`) only for query embeddings
+- All indexing must be done through the Colab workflow
 
-#### 3. Chrome plugins with Python?
+#### 3. Chrome Extension is the UI
 **Hybrid approach**:
 - Chrome extension: JavaScript (popup.js, content.js, background.js)
-- Backend agent: Python (agentic components)
+- Backend agent: Python (FastAPI with agentic components)
 - Communication: HTTP REST API
-- Extension sends page content → Python processes → Extension displays results
+- Extension sends search queries → Python searches FAISS → Extension displays results
 
-#### 4. Integrating nomic-embed-text
-**Two options**:
-- **Local**: Ollama with nomic-embed-text (in EmbeddingService)
-- **Colab**: Sentence Transformers on GPU (faster)
-- Agent automatically tries local first, can fall back to Colab
+#### 4. Change Detection with MD5 Hashing
+- `url_index_cache.json` stores MD5 hash of each webpage's content
+- When re-indexing, Colab checks if content changed
+- If unchanged, skips re-indexing (saves time)
+- If changed, removes old chunks and adds new ones (no duplicates)
 
 ## 🎯 Critical Design Decisions
 
-1. **Local vs Colab Indexing**: Local agent manages search, Colab handles heavy embedding generation
-2. **Change Detection**: MD5 hashing of content (same as example3.py)
-3. **Chunking**: Same strategy as example3.py (256 words, 40 overlap)
-4. **Memory Persistence**: JSON files for state, FAISS binary for vectors
-5. **Excluded Sites**: Hardcoded list in perception layer
+1. **Manual Workflow**: No automatic syncing or ngrok - you control when indexing happens
+2. **Colab-Only Indexing**: Heavy embedding work happens on GPU in Colab
+3. **Local-Only Search**: Fast search with local FAISS and Ollama embeddings
+4. **Change Detection**: MD5 hashing prevents duplicate entries and detects updates
+5. **Chunking**: Same strategy as example3.py (256 words, 40 overlap)
+6. **Smart Highlighting**: Multi-strategy text matching with neon green highlight
+7. **Privacy First**: All data stays in your Colab and local machine
 
 ---
 
